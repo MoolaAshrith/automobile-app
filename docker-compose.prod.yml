@@ -1,0 +1,61 @@
+services:
+
+  automobile-db:
+    image: mysql:8.0
+    container_name: automobile-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    command: >
+      --innodb-buffer-pool-size=128M
+      --max-connections=50
+      --performance-schema=OFF
+    volumes:
+      - automobile-db-data:/var/lib/mysql
+    networks:
+      - automobile-net
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  automobile-app:
+    image: ${ECR_IMAGE}
+    container_name: automobile-app
+    restart: always
+    environment:
+      FLASK_ENV: production
+      SECRET_KEY: ${SECRET_KEY}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: automobile-db
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+    ports:
+      - "80:5000"
+    depends_on:
+      automobile-db:
+        condition: service_healthy
+    networks:
+      - automobile-net
+    command: >
+      sh -c "/app/venv/bin/python seed.py &&
+      /app/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --timeout 120 run:app"
+
+volumes:
+  automobile-db-data:
+    name: automobile-db-data
+
+networks:
+  automobile-net:
+    name: automobile-net
+    driver: bridge

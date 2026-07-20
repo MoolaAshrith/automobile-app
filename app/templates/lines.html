@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Production Lines{% endblock %}
+{% block content %}
+  <p class="eyebrow">Line configuration</p>
+  <h2 class="section-title">Production Lines</h2>
+
+  <div class="toolbar">
+    <span></span>
+    <a class="btn btn-primary" href="{{ url_for('line_new') }}">+ Add Line</a>
+  </div>
+
+  {% if lines %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Line</th><th>Station</th><th>Status</th><th>Output</th><th>Shift</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for l in lines %}
+          <tr>
+            <td>{{ l.name }}</td>
+            <td>{{ l.station }}</td>
+            <td><span class="status-pill {{ l.status }}">{{ l.status }}</span></td>
+            <td class="qty-badge">{{ l.current_output }} / {{ l.target_output }}</td>
+            <td>{{ l.shift }}</td>
+            <td>
+              <div class="row-actions">
+                <a class="btn btn-sm" href="{{ url_for('line_edit', line_id=l.id) }}">Edit</a>
+                <form action="{{ url_for('line_delete', line_id=l.id) }}" method="post" onsubmit="return confirm('Remove line {{ l.name }}?');">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty-state">No production lines yet. <a href="{{ url_for('line_new') }}">Add the first line</a>.</div>
+  {% endif %}
+{% endblock %}

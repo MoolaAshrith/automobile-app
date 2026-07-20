@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment files (secrets never go in the image)
+.env
+.env.*
+!.env.example
+
+# Terraform
+terraform/
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# CI/CD
+.github/
+
+# Local dev
+docker-compose.yml
+docker-compose.prod.yml
+
+# Misc
+*.md
+.DS_Store
+*.log
+migrations/

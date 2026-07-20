@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Floor Control{% endblock %} · Floor Control</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="hazard-bar"></div>
+  <header class="plant-header">
+    <div class="brand">
+      <span class="plate">FC-01</span>
+      <h1>Floor Control</h1>
+    </div>
+    <nav class="plant-nav">
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Andon Board</a>
+      <a href="{{ url_for('lines_list') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('line') }}">Lines</a>
+      <a href="{{ url_for('parts_list') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('part') }}">Parts</a>
+    </nav>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ 'error' if category == 'error' else '' }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="plant-footer">FLOOR CONTROL &middot; INTERNAL PLANT USE</footer>
+</body>
+</html>

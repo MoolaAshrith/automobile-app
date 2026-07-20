@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Parts Inventory{% endblock %}
+{% block content %}
+  <p class="eyebrow">Inventory manifest</p>
+  <h2 class="section-title">Parts</h2>
+
+  <div class="toolbar">
+    <form method="get">
+      <input class="search-input" type="text" name="q" value="{{ q }}" placeholder="Search SKU, name, or category…">
+    </form>
+    <a class="btn btn-primary" href="{{ url_for('part_new') }}">+ Add Part</a>
+  </div>
+
+  {% if parts %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SKU</th><th>Name</th><th>Category</th><th>On Hand</th><th>Reorder At</th><th>Unit Cost</th><th>Supplier</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in parts %}
+          <tr class="{{ 'low-stock' if p.is_low else '' }}">
+            <td><span class="sku-tag">{{ p.sku }}</span></td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.category }}</td>
+            <td class="qty-badge {{ 'low' if p.is_low else '' }}">{{ p.quantity }}</td>
+            <td class="qty-badge">{{ p.reorder_level }}</td>
+            <td>${{ "%.2f"|format(p.unit_cost) }}</td>
+            <td>{{ p.supplier or "—" }}</td>
+            <td>
+              <div class="row-actions">
+                <form action="{{ url_for('part_adjust', part_id=p.id, q=q) }}" method="post">
+                  <input type="hidden" name="delta" value="-1">
+                  <button class="btn btn-sm" type="submit" title="Remove 1 unit">−1</button>
+                </form>
+                <form action="{{ url_for('part_adjust', part_id=p.id, q=q) }}" method="post">
+                  <input type="hidden" name="delta" value="1">
+                  <button class="btn btn-sm" type="submit" title="Add 1 unit">+1</button>
+                </form>
+                <a class="btn btn-sm" href="{{ url_for('part_edit', part_id=p.id) }}">Edit</a>
+                <form action="{{ url_for('part_delete', part_id=p.id) }}" method="post" onsubmit="return confirm('Remove {{ p.sku }} from inventory?');">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty-state">No parts match{{ ' “' + q + '”' if q else '' }}. <a href="{{ url_for('part_new') }}">Add a part</a> to get started.</div>
+  {% endif %}
+{% endblock %}

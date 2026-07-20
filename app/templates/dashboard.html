@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Andon Board{% endblock %}
+{% block content %}
+  <p class="eyebrow">Shift overview &middot; live</p>
+  <h2 class="section-title">Plant Floor Status</h2>
+
+  <div class="kpi-row">
+    <div class="kpi ok">
+      <div class="num">{{ running }}</div>
+      <div class="label">Lines Running</div>
+    </div>
+    <div class="kpi {{ 'alert' if stopped else '' }}">
+      <div class="num">{{ stopped }}</div>
+      <div class="label">Lines Down / Maintenance</div>
+    </div>
+    <div class="kpi {{ 'alert' if low_parts else '' }}">
+      <div class="num">{{ low_parts|length }}</div>
+      <div class="label">Parts Below Reorder</div>
+    </div>
+    <div class="kpi">
+      <div class="num">${{ "{:,.0f}".format(inventory_value) }}</div>
+      <div class="label">Inventory Value</div>
+    </div>
+  </div>
+
+  {% if lines %}
+  <div class="andon-board">
+    {% for line in lines %}
+      <div class="andon-card status-{{ line.status }}">
+        <div class="andon-top">
+          <span class="lamp {{ line.status }}"></span>
+          <div>
+            <div class="line-name">{{ line.name }}</div>
+          </div>
+        </div>
+        <div class="station">{{ line.station }} &middot; {{ line.shift }}</div>
+        <span class="status-pill {{ line.status }}">{{ line.status }}</span>
+        <div class="progress-track">
+          <div class="progress-fill" style="width: {{ line.completion_pct }}%;"></div>
+        </div>
+        <div class="output-line">
+          <span>{{ line.current_output }} / {{ line.target_output }} units</span>
+          <span>{{ line.completion_pct }}%</span>
+        </div>
+        {% if line.note %}<div class="note">{{ line.note }}</div>{% endif %}
+        <form class="status-form" action="{{ url_for('line_status', line_id=line.id) }}" method="post">
+          <button type="submit" name="status" value="running">Run</button>
+          <button type="submit" name="status" value="maintenance">Hold</button>
+          <button type="submit" name="status" value="stopped">Stop</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+  {% else %}
+    <div class="empty-state">No production lines set up yet. <a href="{{ url_for('line_new') }}">Add the first line</a>.</div>
+  {% endif %}
+
+  <h2 class="section-title">Reorder Alerts</h2>
+  {% if low_parts %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>SKU</th><th>Part</th><th>On Hand</th><th>Reorder Level</th><th>Supplier</th></tr>
+        </thead>
+        <tbody>
+          {% for p in low_parts %}
+            <tr class="low-stock">
+              <td><span class="sku-tag">{{ p.sku }}</span></td>
+              <td>{{ p.name }}</td>
+              <td class="qty-badge low">{{ p.quantity }}</td>
+              <td class="qty-badge">{{ p.reorder_level }}</td>
+              <td>{{ p.supplier or "—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">All parts are above their reorder level.</div>
+  {% endif %}
+{% endblock %}

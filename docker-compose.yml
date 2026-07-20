@@ -1,0 +1,52 @@
+services:
+
+  automobile-db:
+    image: mysql:8.0
+    container_name: automobile-db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - automobile-db-data:/var/lib/mysql
+    networks:
+      - automobile-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  automobile-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: automobile-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      FLASK_ENV: development
+    ports:
+      - "5000:5000"
+    depends_on:
+      automobile-db:
+        condition: service_healthy
+    networks:
+      - automobile-net
+    command: >
+      sh -c "/app/venv/bin/python seed.py &&
+      /app/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --reload run:app"
+
+volumes:
+  automobile-db-data:
+    name: automobile-db-data
+
+networks:
+  automobile-net:
+    name: automobile-net
+    driver: bridge

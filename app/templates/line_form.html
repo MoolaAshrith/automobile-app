@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit Line' if line else 'Add Line' }}{% endblock %}
+{% block content %}
+  <p class="eyebrow">Line configuration</p>
+  <h2 class="section-title">{{ 'Edit Line' if line else 'Add Line' }}</h2>
+
+  <div class="form-card">
+    <form method="post">
+      <div class="field-row">
+        <div class="field">
+          <label for="name">Line Name</label>
+          <input id="name" name="name" type="text" value="{{ line.name if line else '' }}" required>
+        </div>
+        <div class="field">
+          <label for="station">Station</label>
+          <select id="station" name="station">
+            {% for s in station_choices %}
+              <option value="{{ s }}" {{ 'selected' if line and line.station == s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="status">Status</label>
+          <select id="status" name="status">
+            {% for s in status_choices %}
+              <option value="{{ s }}" {{ 'selected' if line and line.status == s }}>{{ s|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="shift">Shift</label>
+          <input id="shift" name="shift" type="text" value="{{ line.shift if line else 'Day Shift' }}">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="current_output">Current Output (units)</label>
+          <input id="current_output" name="current_output" type="number" min="0" value="{{ line.current_output if line else 0 }}">
+        </div>
+        <div class="field">
+          <label for="target_output">Target Output (units)</label>
+          <input id="target_output" name="target_output" type="number" min="0" value="{{ line.target_output if line else 0 }}">
+        </div>
+      </div>
+      <div class="field">
+        <label for="note">Note</label>
+        <input id="note" name="note" type="text" placeholder="e.g. Awaiting part delivery" value="{{ line.note if line else '' }}">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">{{ 'Save Changes' if line else 'Add Line' }}</button>
+        <a class="btn" href="{{ url_for('lines_list') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

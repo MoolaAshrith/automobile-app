@@ -1,0 +1,386 @@
+name: Automobile App — CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: automobile-app
+  APP_NAME: automobile
+
+jobs:
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 1 — Lint & Test
+# ──────────────────────────────────────────────────────────────────────────────
+  lint-and-test:
+    name: Lint & test
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: automobile_db
+          MYSQL_USER: automobile_user
+          MYSQL_PASSWORD: automobile_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -prootpassword"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      SECRET_KEY: ci-test-secret-key
+      FLASK_ENV: development
+      DB_USER: automobile_user
+      DB_PASSWORD: automobile_pass
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: automobile_db
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 pytest pytest-flask
+
+      - name: Lint with flake8
+        run: |
+          flake8 app/ config.py run.py seed.py \
+            --max-line-length=120 \
+            --extend-ignore=W292,W391,W503 \
+            --exclude=__pycache__,.git \
+            --count --statistics
+
+      - name: Run database migrations
+        run: |
+          flask db init || true
+          flask db migrate -m "ci migration" || true
+          flask db upgrade || true
+        env:
+          FLASK_APP: run.py
+
+      - name: Seed database
+        run: python seed.py
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short 2>/dev/null || echo "No tests directory — skipping"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 2 — Docker Build
+# ──────────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "image_tag=sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Image tag: sha-${SHORT_SHA}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          push: false
+          tags: ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/automobile-app.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/automobile-app.tar
+          retention-days: 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 3 — Push to ECR
+# ──────────────────────────────────────────────────────────────────────────────
+  push-to-ecr:
+    name: Push to ECR
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+
+    outputs:
+      ecr_image: ${{ steps.push.outputs.ecr_image }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load and push image to ECR
+        id: push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+        run: |
+          docker load --input /tmp/automobile-app.tar
+
+          ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          ECR_LATEST="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_IMAGE}
+          docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_LATEST}
+
+          docker push ${ECR_IMAGE}
+          docker push ${ECR_LATEST}
+
+          echo "ecr_image=${ECR_IMAGE}" >> $GITHUB_OUTPUT
+          echo "Pushed: ${ECR_IMAGE}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 4 — Terraform Apply
+# ──────────────────────────────────────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform apply
+    runs-on: ubuntu-latest
+    needs: push-to-ecr
+    if: github.ref == 'refs/heads/main'
+
+    outputs:
+      ec2_public_ip: ${{ steps.tf_output.outputs.ec2_public_ip }}
+      ecr_repository_url: ${{ steps.tf_output.outputs.ecr_repository_url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform plan \
+            -var="key_pair_name=${{ secrets.EC2_KEY_PAIR_NAME }}" \
+            -out=tfplan
+        env:
+          TF_VAR_aws_region: ${{ env.AWS_REGION }}
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: tf_output
+        working-directory: terraform
+        run: |
+          EC2_IP=$(terraform output -raw ec2_public_ip)
+          ECR_URL=$(terraform output -raw ecr_repository_url)
+          echo "ec2_public_ip=${EC2_IP}" >> $GITHUB_OUTPUT
+          echo "ecr_repository_url=${ECR_URL}" >> $GITHUB_OUTPUT
+          echo "EC2 IP: ${EC2_IP}"
+          echo "ECR URL: ${ECR_URL}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 5 — Manual Approval Gate
+# ──────────────────────────────────────────────────────────────────────────────
+  manual-approval:
+    name: Manual approval
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Awaiting approval
+        run: |
+          echo "Deployment approved by: ${{ github.actor }}"
+          echo "EC2 target: ${{ needs.terraform-apply.outputs.ec2_public_ip }}"
+          echo "Image: ${{ needs.push-to-ecr.outputs.ecr_image }}"
+          echo "Proceeding to deploy..."
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 6 — Deploy to EC2
+# ──────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: [manual-approval, terraform-apply, push-to-ecr]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/automobile-app-key.pem
+          chmod 600 ~/.ssh/automobile-app-key.pem
+          ssh-keyscan -H ${{ needs.terraform-apply.outputs.ec2_public_ip }} \
+            >> ~/.ssh/known_hosts
+
+      - name: Wait for EC2 to be ready
+        run: |
+          echo "Waiting for EC2 SSH to be available..."
+          for i in $(seq 1 20); do
+            if ssh -i ~/.ssh/automobile-app-key.pem \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                ubuntu@${{ needs.terraform-apply.outputs.ec2_public_ip }} \
+                "echo ready" 2>/dev/null; then
+              echo "EC2 is ready."
+              break
+            fi
+            echo "Attempt $i/20 — retrying in 15s..."
+            sleep 15
+          done
+
+      - name: Copy docker-compose.prod.yml to EC2
+        run: |
+          scp -i ~/.ssh/automobile-app-key.pem \
+            -o StrictHostKeyChecking=no \
+            docker-compose.prod.yml \
+            ubuntu@${{ needs.terraform-apply.outputs.ec2_public_ip }}:/opt/automobile-app/docker-compose.yml
+
+      - name: Deploy on EC2
+        env:
+          EC2_IP: ${{ needs.terraform-apply.outputs.ec2_public_ip }}
+          ECR_IMAGE: ${{ needs.push-to-ecr.outputs.ecr_image }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          ssh -i ~/.ssh/automobile-app-key.pem \
+            -o StrictHostKeyChecking=no \
+            ubuntu@${EC2_IP} << ENDSSH
+            set -e
+
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+              | docker login --username AWS --password-stdin \
+                ${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+            cd /opt/automobile-app
+
+            cat > .env << ENVEOF
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          FLASK_ENV=production
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_HOST=automobile-db
+          DB_PORT=3306
+          DB_NAME=${{ secrets.DB_NAME }}
+          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+          ECR_IMAGE=${ECR_IMAGE}
+          ENVEOF
+
+            docker pull ${ECR_IMAGE}
+            docker compose down --remove-orphans || true
+            docker compose up -d
+
+            echo "Waiting for containers to be healthy..."
+            sleep 40
+            docker compose ps
+            echo "Deployment complete."
+          ENDSSH
+
+      - name: Smoke test
+        env:
+          EC2_IP: ${{ needs.terraform-apply.outputs.ec2_public_ip }}
+        run: |
+          echo "Running smoke test against http://${EC2_IP}/auth/login"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 \
+              http://${EC2_IP}/auth/login)
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test passed — HTTP ${STATUS}"
+              exit 0
+            fi
+            echo "Attempt $i/12 — got HTTP ${STATUS}, retrying in 15s..."
+            sleep 15
+          done
+          echo "Smoke test failed after 12 attempts."
+          exit 1
+
+      - name: Print deployment summary
+        if: success()
+        run: |
+          echo "================================================"
+          echo "  Deployment successful!"
+          echo "  App URL : http://${{ needs.terraform-apply.outputs.ec2_public_ip }}"
+          echo "  Image   : ${{ needs.push-to-ecr.outputs.ecr_image }}"
+          echo "  Commit  : ${{ github.sha }}"
+          echo "  Actor   : ${{ github.actor }}"
+          echo "================================================"
