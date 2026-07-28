@@ -1,9 +1,11 @@
 resource "aws_instance" "automobile_app" {
-  ami                    = var.ami_id
-  instance_type          = var.instance_type
-  key_name               = var.key_pair_name
-  vpc_security_group_ids = [aws_security_group.automobile_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.automobile_profile.name
+  ami                         = var.ami_id
+  instance_type               = var.instance_type
+  key_name                    = var.key_pair_name
+  vpc_security_group_ids      = [aws_security_group.automobile_sg.id]
+  iam_instance_profile        = aws_iam_instance_profile.automobile_profile.name
+  subnet_id = aws_subnet.automobile_subnet.id
+  associate_public_ip_address = true
 
   user_data = file("${path.module}/user_data.sh")
 
