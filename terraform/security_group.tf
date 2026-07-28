@@ -1,6 +1,7 @@
 resource "aws_security_group" "automobile_sg" {
   name        = "${var.app_name}-sg"
   description = "Security group for Automobile Manufacturing App EC2"
+  vpc_id      = aws_vpc.automobile_vpc.id
 
   ingress {
     description = "SSH"
