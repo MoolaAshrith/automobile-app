@@ -1,4 +1,4 @@
-  deploy:
+   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
     needs: [manual-approval, terraform-apply, push-to-ecr]
@@ -37,4 +37,89 @@
             echo "Attempt $i/20 — retrying in 15s..."
             sleep 15
           done
-          echo "EC2 
+          echo "EC2 did not become ready in time."
+          exit 1
+
+      - name: Create app directory on EC2
+        run: |
+          ssh -i ~/.ssh/automobile-app-key.pem \
+            -o StrictHostKeyChecking=no \
+            ubuntu@${{ needs.terraform-apply.outputs.ec2_public_ip }} \
+            "sudo mkdir -p /opt/automobile-app && sudo chown ubuntu:ubuntu /opt/automobile-app"
+
+      - name: Copy docker-compose.prod.yml to EC2
+        run: |
+          scp -i ~/.ssh/automobile-app-key.pem \
+            -o StrictHostKeyChecking=no \
+            docker-compose.prod.yml \
+            ubuntu@${{ needs.terraform-apply.outputs.ec2_public_ip }}:/opt/automobile-app/docker-compose.yml
+
+      - name: Deploy on EC2
+        env:
+          EC2_IP: ${{ needs.terraform-apply.outputs.ec2_public_ip }}
+          ECR_IMAGE: ${{ needs.push-to-ecr.outputs.ecr_image }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          ssh -i ~/.ssh/automobile-app-key.pem \
+            -o StrictHostKeyChecking=no \
+            ubuntu@${EC2_IP} << 'ENDSSH'
+          set -e
+          sudo mkdir -p /opt/automobile-app
+          sudo chown ubuntu:ubuntu /opt/automobile-app
+          cd /opt/automobile-app
+
+          aws ecr get-login-password --region ap-south-1 \
+            | docker login --username AWS --password-stdin \
+              ${AWS_ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com
+
+          cat > .env << ENVEOF
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          FLASK_ENV=production
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_HOST=automobile-db
+          DB_PORT=3306
+          DB_NAME=${{ secrets.DB_NAME }}
+          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+          ECR_IMAGE=${ECR_IMAGE}
+          ENVEOF
+
+          docker pull ${ECR_IMAGE}
+          docker compose down --remove-orphans || true
+          docker compose up -d
+
+          echo "Waiting for containers to be healthy..."
+          sleep 40
+          docker compose ps
+          echo "Deployment complete."
+          ENDSSH
+
+      - name: Smoke test
+        env:
+          EC2_IP: ${{ needs.terraform-apply.outputs.ec2_public_ip }}
+        run: |
+          echo "Running smoke test against http://${EC2_IP}/auth/login"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 \
+              http://${EC2_IP}/auth/login)
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test passed — HTTP ${STATUS}"
+              exit 0
+            fi
+            echo "Attempt $i/12 — got HTTP ${STATUS}, retrying in 15s..."
+            sleep 15
+          done
+          echo "Smoke test failed after 12 attempts."
+          exit 1
+
+      - name: Print deployment summary
+        if: success()
+        run: |
+          echo "================================================"
+          echo "  Deployment successful!"
+          echo "  App URL : http://${{ needs.terraform-apply.outputs.ec2_public_ip }}"
+          echo "  Image   : ${{ needs.push-to-ecr.outputs.ecr_image }}"
+          echo "  Commit  : ${{ github.sha }}"
+          echo "  Actor   : ${{ github.actor }}"
+          echo "================================================"
