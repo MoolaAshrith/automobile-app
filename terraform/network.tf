@@ -1,26 +1,46 @@
-resource "aws_instance" "automobile_app" {
-  ami                         = var.ami_id
-  instance_type               = var.instance_type
-  key_name                    = var.key_pair_name
-  vpc_security_group_ids      = [aws_security_group.automobile_sg.id]
-  iam_instance_profile        = aws_iam_instance_profile.automobile_profile.name
-  subnet_id                   = aws_subnet.automobile_public_subnet.id
-  associate_public_ip_address = true
+resource "aws_vpc" "automobile_vpc" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 
-  user_data = file("${path.module}/user_data.sh")
+  tags = {
+    Name = "${var.app_name}-vpc"
+  }
+}
 
-  root_block_device {
-    volume_size           = 20
-    volume_type           = "gp2"
-    delete_on_termination = true
+resource "aws_internet_gateway" "automobile_igw" {
+  vpc_id = aws_vpc.automobile_vpc.id
+
+  tags = {
+    Name = "${var.app_name}-igw"
+  }
+}
+
+resource "aws_subnet" "automobile_subnet" {
+  vpc_id                  = aws_vpc.automobile_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "ap-south-1a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.app_name}-subnet"
+  }
+}
+
+resource "aws_route_table" "automobile_public_rt" {
+  vpc_id = aws_vpc.automobile_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.automobile_igw.id
   }
 
   tags = {
-    Name        = "${var.app_name}-app-server"
-    Environment = var.environment
+    Name = "${var.app_name}-public-rt"
   }
+}
 
-  lifecycle {
-    ignore_changes = [user_data]
-  }
+resource "aws_route_table_association" "automobile_public_assoc" {
+  subnet_id      = aws_subnet.automobile_subnet.id
+  route_table_id = aws_route_table.automobile_public_rt.id
 }
