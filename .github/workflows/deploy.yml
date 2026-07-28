@@ -89,10 +89,16 @@
           docker compose up -d
 
           echo "Waiting for containers to be healthy..."
-          sleep 40
+          for i in $(seq 1 18); do
+            if docker compose ps | grep -q "Up"; then
+              echo "Containers are up."
+              break
+            fi
+            echo "Attempt $i/18 — waiting 10s..."
+            sleep 10
+          done
           docker compose ps
           echo "Deployment complete."
-          ENDSSH
 
       - name: Smoke test
         env:
